@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Region map</title>
+<script src="https://unpkg.com/d3@7.9.0/dist/d3.min.js" integrity="sha384-CjloA8y00+1SDAUkjs099PVfnY2KmDC2BZnws9kh8D/lX1s46w6EPhpXdqMfjK6i" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/topojson-client@3.1.0/dist/topojson-client.min.js" integrity="sha384-Ukv1p/xTma6P4/2bY5KzWBw+ydSpXmhCMtyciIQVDJ1RmOxtCYNMF1uXT9T63H67" crossorigin="anonymous"></script>
+<style>
+  html,body{margin:0;height:100%;background:transparent;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:-0.02em;color:#334155;overflow:hidden}
+  #root{position:relative;width:100%;height:100%;display:flex;gap:16px;align-items:center}
+  #map{flex:1;min-width:0;height:100%}
+  svg{display:block;width:100%;height:100%}
+  path.st{stroke:#fff;stroke-width:.6;transition:filter .15s,opacity .15s;cursor:default}
+  path.st.dim{opacity:.35}
+  #legend{flex:none;width:132px;display:flex;flex-direction:column;gap:6px}
+  .row{display:flex;align-items:center;gap:8px;font-size:12px;padding:5px 6px;border-radius:6px;cursor:default;transition:background .15s}
+  .row:hover,.row.on{background:#F1F5F9}
+  .sw{width:10px;height:10px;border-radius:3px;flex:none}
+  .nm{flex:1;min-width:0;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .v{font-weight:500;color:#334155}
+  #tip{position:absolute;pointer-events:none;background:#000;color:#fff;border-radius:6px;padding:6px 8px;font-size:12px;line-height:1.35;display:none;white-space:nowrap;z-index:5}
+  #msg{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;font-size:12px;color:#64748B;text-align:center;padding:16px}
+  #msg.err{color:#B91C1C}
+  @media (max-width:420px){#legend{display:none}}
+</style>
+</head>
+<body>
+<div id="root"><div id="map"></div><div id="legend"></div><div id="tip"></div><div id="msg">Loading map…</div></div>
+<script>
+(function () {
+  var q = new URLSearchParams(location.search);
+  var base = q.get('c') || '#3b82f6';
+  var rows = (q.get('d') || '').split('|').filter(Boolean).map(function (s) { var p = s.split('~'); return { name: p[0], value: p[1], w: parseFloat(p[2]) || 0 }; });
+  var REGION = {};
+  var SETS = {
+    Northeast: ['09','23','25','33','34','36','42','44','50'],
+    Midwest: ['17','18','19','20','26','27','29','31','38','39','46','55'],
+    South: ['01','05','10','11','12','13','21','22','24','28','37','40','45','47','48','51','54'],
+    West: ['02','04','06','08','15','16','30','32','35','41','49','53','56']
+  };
+  Object.keys(SETS).forEach(function (r) { SETS[r].forEach(function (id) { REGION[id] = r; }); });
+  function rgb(c) { var x = c.replace('#', ''); if (x.length === 3) x = x.split('').map(function (d) { return d + d; }).join(''); return [0, 2, 4].map(function (i) { return parseInt(x.substr(i, 2), 16); }); }
+  var B = rgb(base);
+  function toHsl(c) { var r = c[0] / 255, g = c[1] / 255, b = c[2] / 255, mx = Math.max(r, g, b), mn = Math.min(r, g, b), l = (mx + mn) / 2, d = mx - mn, hh = 0, s = 0; if (d) { s = d / (1 - Math.abs(2 * l - 1)); hh = mx === r ? ((g - b) / d) % 6 : mx === g ? (b - r) / d + 2 : (r - g) / d + 4; hh *= 60; if (hh < 0) hh += 360; } return [hh, s, l]; }
+  function fromHsl(hh, s, l) { var c = (1 - Math.abs(2 * l - 1)) * s, x = c * (1 - Math.abs((hh / 60) % 2 - 1)), m = l - c / 2, p = hh < 60 ? [c, x, 0] : hh < 120 ? [x, c, 0] : hh < 180 ? [0, c, x] : hh < 240 ? [0, x, c] : hh < 300 ? [x, 0, c] : [c, 0, x]; return p.map(function (v) { return Math.round((v + m) * 255); }); }
+  var HB = toHsl(B), B2 = q.get('c2') ? rgb(q.get('c2')) : fromHsl((HB[0] + 330) % 360, Math.min(1, HB[1] * 1.05 + 0.05), Math.max(0.18, HB[2] - 0.2)), B0 = fromHsl((HB[0] + 25) % 360, Math.min(1, HB[1]), Math.min(0.9, HB[2] + 0.32));
+  function mixc(a, b, t) { return a.map(function (v, i) { return Math.round(v + (b[i] - v) * t); }); }
+  function ramp(t) { t = Math.max(0, Math.min(1, t)); var c = t < 0.5 ? mixc(B0, B, t * 2) : mixc(B, B2, (t - 0.5) * 2); return 'rgb(' + c.join(',') + ')'; }
+  function shade(w, id) { var j = id == null ? 0 : (((+id * 2654435761) % 1000) / 1000 - 0.5) * 0.22; return ramp(0.12 + 0.82 * Math.max(0, Math.min(1, w / 100)) + j); }
+  var byName = {}; rows.forEach(function (r) { byName[r.name] = r; });
+  var msg = document.getElementById('msg'), tip = document.getElementById('tip'), root = document.getElementById('root');
+  var legend = document.getElementById('legend');
+  rows.slice().sort(function (a, b) { return b.w - a.w; }).forEach(function (r) {
+    var d = document.createElement('div'); d.className = 'row'; d.setAttribute('data-r', r.name);
+    d.innerHTML = '<span class="sw" style="background:' + shade(r.w) + '"></span><span class="nm">' + r.name + '</span><span class="v">' + r.value + '</span>';
+    legend.appendChild(d);
+  });
+  var gb = document.createElement('div'); gb.style.cssText = 'margin-top:6px;padding:0 6px;display:flex;flex-direction:column;gap:4px'; gb.innerHTML = '<span style="height:8px;border-radius:4px;background:linear-gradient(90deg,' + ramp(0) + ',' + ramp(0.5) + ',' + ramp(1) + ')"></span><span style="display:flex;justify-content:space-between;font-size:10px;color:#64748B"><span>Low</span><span>High</span></span>'; legend.appendChild(gb);
+  var states, path, svg;
+  function draw() {
+    var el = document.getElementById('map'), W = el.clientWidth, H = el.clientHeight;
+    if (!states || W < 40 || H < 40) return;
+    var proj = d3.geoAlbersUsa().fitExtent([[4, 4], [W - 4, H - 4]], { type: 'FeatureCollection', features: states });
+    path = d3.geoPath(proj);
+    el.innerHTML = '';
+    svg = d3.select(el).append('svg').attr('viewBox', '0 0 ' + W + ' ' + H).attr('role', 'img').attr('aria-label', 'Map of United States regions shaded by value');
+    svg.selectAll('path').data(states).join('path').attr('class', 'st').attr('d', path)
+      .attr('fill', function (f) { var r = byName[REGION[f.id]]; return r ? shade(r.w, f.id) : '#E2E8F0'; })
+      .on('mousemove', function (e, f) { var r = byName[REGION[f.id]]; if (!r) return; hi(r.name); var b = root.getBoundingClientRect(); tip.style.display = 'block'; tip.style.left = Math.min(e.clientX - b.left + 12, b.width - 140) + 'px'; tip.style.top = (e.clientY - b.top + 12) + 'px'; tip.innerHTML = '<b style="font-weight:500">' + f.properties.name + '</b><br>' + r.name + ' · ' + r.value; })
+      .on('mouseleave', function () { hi(null); tip.style.display = 'none'; });
+  }
+  function hi(name) {
+    if (svg) svg.selectAll('path.st').classed('dim', function (f) { return name && REGION[f.id] !== name; });
+    document.querySelectorAll('.row').forEach(function (r) { r.classList.toggle('on', r.getAttribute('data-r') === name); });
+  }
+  document.querySelectorAll('.row').forEach(function (r) { r.addEventListener('mouseenter', function () { hi(r.getAttribute('data-r')); }); r.addEventListener('mouseleave', function () { hi(null); }); });
+  if (!window.d3 || !window.topojson) { msg.className = 'err'; msg.textContent = 'Map libraries couldn’t load. Check your connection.'; return; }
+  fetch('https://cdn.jsdelivr.net/npm/us-atlas@3.0.1/states-10m.json').then(function (r) { if (!r.ok) throw new Error(); return r.json(); }).then(function (t) {
+    states = topojson.feature(t, t.objects.states).features; msg.style.display = 'none'; draw();
+    if (window.ResizeObserver) new ResizeObserver(draw).observe(document.getElementById('map')); else window.addEventListener('resize', draw);
+  }).catch(function () { msg.className = 'err'; msg.textContent = 'Couldn’t load the map data. Check your connection and try again.'; });
+})();
+</script>
+</body>
+</html>
